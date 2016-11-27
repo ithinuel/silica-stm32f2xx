@@ -1,0 +1,12 @@
+[package]
+name = "silica-stm32f2xx"
+version = "0.1.0"
+authors = ["ithinuel <ithinuel@gmail.com>"]
+
+[dependencies]
+silica = { path = "../silica" }
+silica-cortexm = { path = "../silica-cortexm" }
+
+[dependencies.compiler_builtins]
+git = "https://github.com/rust-lang-nursery/compiler-builtins.git"
+
