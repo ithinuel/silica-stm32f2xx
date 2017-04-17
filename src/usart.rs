@@ -1,6 +1,6 @@
 use core::intrinsics;
 use collections::string::String;
-use collections::borrow::ToOwned;
+use collections::string::ToString;
 
 use silica::peripheral::serial::{BitCount, Parity, StopBit, Serial as ISerial};
 use silica::sync::mpsc::Sender;
@@ -60,16 +60,16 @@ impl<'a> Peripheral for USARTPeripheral<'a> {
         init_peripheral![self.pin_tx, self.pin_rx]; // data lines
         init_peripheral![self.pin_dtr, self.pin_dcd, self.pin_dsr, self.pin_ri]; // sw flow control
         init_peripheral![self.pin_rts, self.pin_cts]; // hw flow control
-        if let Some(_) = self.pin_cts {
+        if self.pin_cts.is_some() {
             cr3 |= 0x200;
         }
-        if let Some(_) = self.pin_rts {
+        if self.pin_rts.is_some() {
             cr3 |= 0x100;
         }
-        if let Some(_) = self.pin_tx {
+        if self.pin_tx.is_some() {
             cr1 |= 0x08;
         }
-        if let Some(_) = self.pin_rx {
+        if self.pin_rx.is_some() {
             cr1 |= 0x04;
         }
 
@@ -85,7 +85,7 @@ impl<'a> Peripheral for USARTPeripheral<'a> {
     }
 
     fn deinit(&self) -> Result<(), String> {
-        Err("Not yet implemented".to_owned())
+        Err("Not yet implemented".to_string())
     }
 }
 
@@ -106,36 +106,39 @@ impl<'a> ISerial for Serial<'a> {
         let mut cr1 = unsafe { (*self.periph.base_address).control1.read() };
         init_peripheral![Some(&self.periph)];
 
-        let clk = self.periph.clock.get_clock() as f64;
+        let clk = self.periph.clock.get_clock();
 
-        let mut usartdiv = clk / (16_f64 * (baudrate as f64));
-        let over8 = usartdiv < 1_f64;
+        let mut usartdiv_int = clk / (16 * baudrate);
+        let mut usartdiv_frac = clk - (usartdiv_int * 16);
+
+        let over8 = usartdiv_int == 0;
         if over8 {
             cr1 |= 0x8000;
-            usartdiv *= 2_f64;
+            usartdiv_frac *= 2;
+            usartdiv_int += usartdiv_frac >> 3;
+            usartdiv_frac &= 0x7;
         }
-        if usartdiv < 1_f64 {
-            return Err("This baudrate is too high for this serial port.".to_owned());
+        if usartdiv_int == 0 {
+            return Err("This baudrate is too high for this serial port.".to_string());
         }
-        if usartdiv >= 4096_f64 {
-            return Err("This baudrate is too low for this serial port.".to_owned());
+        if usartdiv_int >= 4096 {
+            return Err("This baudrate is too low for this serial port.".to_string());
         }
 
-        let mantissa_f64 = unsafe { intrinsics::truncf64(usartdiv) };
-        let frac_f64 = (usartdiv - mantissa_f64) * if over8 {8_f64} else {16_f64};
+        let frac = usartdiv_frac * if over8 {8} else {16};
 
-        let mantissa: u16 = mantissa_f64 as u16;
-        let div: u16 = unsafe { intrinsics::roundf64(frac_f64) as u16 };
+        let mantissa: u16 = usartdiv_int as u16;
+        let div: u16 = usartdiv_frac as u16;
 
         // setup DMA rx
         init_peripheral![self.periph.dma_rx];
-        if let Some(_) = self.periph.dma_rx {
+        if self.periph.dma_rx.is_some() {
             cr3 |= 0x80;
         }
 
         // setup DMA tx
         init_peripheral![self.periph.dma_tx];
-        if let Some(_) = self.periph.dma_tx {
+        if self.periph.dma_tx.is_some() {
             cr3 |= 0x40;
         }
 

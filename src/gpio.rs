@@ -1,5 +1,7 @@
 use collections::string::String;
-use collections::borrow::ToOwned;
+use collections::string::ToString;
+
+use silica::peripheral::gpio::{Input as IInput, Output as IOutput};
 
 use rcc;
 use Peripheral;
@@ -33,7 +35,7 @@ pub enum OutputType {
 
 pub enum Mode {
     In,
-    Out(OutputType),
+    Out(OutputType, bool),
     AlternateFunction(AlternateFunction),
     Analog
 }
@@ -61,7 +63,7 @@ pub struct PortRegisters {
     reserved0: u16,
     output_speed: Rw<u32>,
     pu_pd: Rw<u32>,
-    input_data: Rw<u16>,
+    input_data: Ro<u16>,
     reserved1: u16,
     output_data: Rw<u16>,
     reserved2: u16,
@@ -88,7 +90,7 @@ impl Peripheral for PortPeripheral {
         // clock off
 
         // what make a pin disabled ???
-        Err("Not yet implemented".to_owned())
+        Err("Not yet implemented".to_string())
     }
 }
 
@@ -100,21 +102,23 @@ pub struct PinPeripheral<'a> {
     pub pull_side: PullSide,
 }
 
+unsafe impl<'a> Sync for PinPeripheral<'a> {}
+
 impl<'a> Peripheral for PinPeripheral<'a> {
     fn init(&self) -> Result<(), String> {
         if 15 < self.pin {
-            return Err("Invalid pin number".to_owned())
+            return Err("Invalid pin number".to_string())
         }
 
         if let Err(msg) = self.port.init() {
             return Err(msg)
         }
 
-        let (mode, otype, af) = match self.mode {
-            Mode::In => (0, 0, 0),
-            Mode::Out(otype) => (1, otype as u16, 0),
-            Mode::AlternateFunction(af) => (2, 0, af as u32),
-            Mode::Analog => { (3, 0, 0) }
+        let (mode, otype, af, state) = match self.mode {
+            Mode::In => (0, 0, 0, false),
+            Mode::Out(otype, state) => (1, otype as u16, 0, state),
+            Mode::AlternateFunction(af) => (2, 0, af as u32, false),
+            Mode::Analog => { (3, 0, 0, false) }
         };
 
         let onebit_mask = 1 << self.pin;
@@ -122,16 +126,21 @@ impl<'a> Peripheral for PinPeripheral<'a> {
         let twobit_mask = 3 << twobit_shift;
 
         let mut af_shift = self.pin * 4;
-        if af_shift > 15 {
+        if af_shift > 32 {
             af_shift = af_shift - 32;
         }
-        let af_mask = 15 << af_shift;
+        let af_mask = 0xF << af_shift;
 
         unsafe {
             (*self.port.base_address).mode.update(mode << twobit_shift, twobit_mask);
             (*self.port.base_address).output_type.update(otype << self.pin, onebit_mask);
             (*self.port.base_address).output_speed.update((self.speed as u32) << twobit_shift, twobit_mask);
             (*self.port.base_address).pu_pd.update((self.pull_side as u32) << twobit_shift, twobit_mask);
+            if state {
+                (*self.port.base_address).output_data.update(1 << self.pin, onebit_mask);
+            } else {
+                (*self.port.base_address).output_data.update(0, onebit_mask);
+            }
             if self.pin > 7 {
                 (*self.port.base_address).alternate_function_low.update(af << af_shift, af_mask);
             } else {
@@ -143,6 +152,61 @@ impl<'a> Peripheral for PinPeripheral<'a> {
     }
 
     fn deinit(&self) -> Result<(), String> {
-        Err("Not yet implemented".to_owned())
+        Err("Not yet implemented".to_string())
+    }
+}
+
+pub struct In<'a> {
+    periph: &'a PinPeripheral<'a>
+}
+
+impl<'a> IInput for In<'a> {
+    fn read(&self) -> bool {
+        let mask = 1 << self.periph.pin;
+        unsafe {
+            ((*self.periph.port.base_address).input_data.read() & mask) == mask
+        }
+    }
+}
+
+impl<'a> Drop for In<'a> {
+    fn drop(&mut self) {
+    }
+}
+
+pub struct Out<'a> {
+    periph: &'a PinPeripheral<'a>
+}
+
+impl<'a> Out<'a> {
+    pub fn from(f: &'a PinPeripheral<'a>) -> Out<'a> {
+        Out {
+            periph: f
+        }
+    }
+}
+
+impl<'a> IOutput for Out<'a> {
+    fn get_command(&self) -> bool {
+        let mask = 1 << self.periph.pin;
+        unsafe {
+            ((*self.periph.port.base_address).output_data.read() & mask) == mask
+        }
+    }
+    fn write(&mut self, command: bool) -> bool {
+        let mask = 1 << self.periph.pin;
+        unsafe {
+            if command {
+                (*self.periph.port.base_address).bit_set.write(mask);
+            } else {
+                (*self.periph.port.base_address).bit_reset.write(mask);
+            }
+            ((*self.periph.port.base_address).output_data.read() & mask) == mask
+        }
+    }
+}
+
+impl<'a> Drop for Out<'a> {
+    fn drop(&mut self) {
     }
 }

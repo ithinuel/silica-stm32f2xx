@@ -12,11 +12,8 @@
 
 extern crate silica;
 extern crate collections;
-extern crate silica_cortexm;
+extern crate silica_cortexm3;
 extern crate compiler_builtins;
-
-use silica_cortexm::{Exceptions, Handler};
-use collections::string::String;
 
 macro_rules! init_peripheral {
     ( $( $x:expr ),* ) => {
@@ -30,14 +27,40 @@ macro_rules! init_peripheral {
     }
 }
 
+/// GPIO control module
+pub mod gpio;
+/// DMA control module
+pub mod dma;
+/// USART (and UART) control module
+pub mod usart;
+/// Timer control module
+pub mod timer;
+/// RCC control module
+pub mod rcc;
+/// Flash control module
+pub mod flash;
+
+
+use silica_cortexm3::{Exceptions, Handler};
+use collections::string::String;
+
+extern "C" {
+    static idata_from: usize;
+    static idata_to: usize;
+    static idata_size: usize;
+    static bss_start: usize;
+    static bss_size: usize;
+}
+
 pub mod registers {
-    pub use silica_cortexm::{Ro, Rw, Wo};
+    pub use silica_cortexm3::{Ro, Rw, Wo};
 }
 
 pub struct AdvancedPeripheralBus {
     pub clock_prescaler: u32
 }
 
+/// Peripheral trait
 pub trait Peripheral {
     fn init(&self) -> Result<(), String>;
     fn deinit(&self) -> Result<(), String>;
@@ -48,9 +71,19 @@ extern "Rust" {
 
 pub unsafe extern "C" fn start() -> ! {
     // initialize bss
+    let _bss_start = &bss_start as *const usize as *mut u8;
+    let _bss_size = &bss_size as *const usize as usize;
+    core::intrinsics::write_bytes(_bss_start, 0, _bss_size);
+
     // initialize idata
+    let _idata_from = &idata_from as *const usize as *const u8;
+    let _idata_to = &idata_to as *const usize as *mut u8;
+    let _idata_size = &idata_size as *const usize as usize;
+    core::intrinsics::copy(_idata_from, _idata_to, _idata_size);
+
+    // system init
     main();
-    silica_cortexm::ppb::scb::system_reset();
+    silica_cortexm3::ppb::scb::system_reset();
 }
 
 #[cfg(target_arch = "arm")]
@@ -150,12 +183,6 @@ pub enum IRQType {
     CRYP            = 79,
     HASH_RNG        = 80,
 }
-
-pub mod gpio;
-pub mod dma;
-pub mod usart;
-pub mod timer;
-pub mod rcc;
 
 #[no_mangle]
 #[linkage = "external"]

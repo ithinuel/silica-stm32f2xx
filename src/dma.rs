@@ -1,5 +1,5 @@
 use collections::string::String;
-use collections::borrow::ToOwned;
+use collections::string::ToString;
 
 use rcc;
 use Peripheral;
@@ -40,9 +40,9 @@ impl<'a> Peripheral for DMAStreamPeripheral<'a> {
     fn init(&self) -> Result<(), String> {
 
 
-        Err("Not yet implemented".to_owned())
+        Err("Not yet implemented".to_string())
     }
     fn deinit(&self) -> Result<(), String> {
-        Err("Not yet implemented".to_owned())
+        Err("Not yet implemented".to_string())
     }
 }
