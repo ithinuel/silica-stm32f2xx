@@ -1,15 +1,14 @@
-use collections::string::String;
+use alloc::string::String;
+use silica::peripheral::Peripheral;
 
 mod flags;
-
 pub use self::flags::*;
 
 use registers::*;
-use Peripheral;
 
-const APBAHB_PRESCALER_TABLE: [u8; 16] = [0, 0, 0, 0, 1, 2, 3, 4, 1, 2, 3, 4, 6, 7, 8, 9];
+const APBAHB_PRESCALER_TABLE: [usize; 8] = [2, 4, 8, 16, 64, 128, 256, 512];
 
-pub static mut SYSCLOCK: usize = 8_000_000;
+static mut SYSCLOCK: usize = 8_000_000;
 
 // _ = reserved
 // r = ro
@@ -78,7 +77,7 @@ pub struct RCCRegisters {
 }
 
 extern {
-    pub fn rcc_get() -> &mut RCCRegisters;
+    pub fn rcc_get() -> &'static mut RCCRegisters;
 }
 
 pub enum ClockSelection {
@@ -238,45 +237,65 @@ pub struct RCCPeripheral {
     pub rcc: *mut RCCRegisters,
     pub clock: Clock
 }
+unsafe impl Sync for RCCPeripheral {}
 impl RCCPeripheral {
-    fn set_clock_enable(&self, reg: u8, bit: u32, mask: u32) {
+    fn set_clock(&self, v: bool) {
         unsafe {
+            let reg = (self.clock as u8) >> 5;
+            let mask = 1 << ((self.clock as u8) & 0x1F);
+            let bit = if v {mask} else {0};
             let rcc = &mut *self.rcc;
             match reg {
-                0 => rcc.ahb1_clock_enable.update(bit, mask),
-                1 => rcc.ahb2_clock_enable.update(bit, mask),
-                2 => rcc.ahb3_clock_enable.update(bit, mask),
-                3 => rcc.apb1_clock_enable.update(bit, mask),
-                4 => rcc.apb2_clock_enable.update(bit, mask),
-                _ => {}
-            }
+                0 => &mut rcc.ahb1_clock_enable,
+                1 => &mut rcc.ahb2_clock_enable,
+                2 => &mut rcc.ahb3_clock_enable,
+                3 => &mut rcc.apb1_clock_enable,
+                4 => &mut rcc.apb2_clock_enable,
+                _ => { panic!("RCC: Unknown peripheral") }
+            }.update(bit, mask);
         }
     }
     pub fn get_clock(&self) -> usize {
         unsafe {
             // critical_section_start
-            SYSCLOCK
+            let mut clock = SYSCLOCK;
+            let config = (&mut *self.rcc).config.read();
+            let hpre = (config >> 4) & 0xF;
+            clock /= if hpre < 0b1000 {
+                1
+            } else {
+                APBAHB_PRESCALER_TABLE[(hpre-0b1000) as usize]
+            };
+
+            let reg = (self.clock as u8) >> 5;
+            let ppre = if reg == 3 {
+                config >> 10
+            } else if reg == 4 {
+                config >> 13
+            } else {
+                panic!("RCC: Unknown peripheral")
+            } & 0x7;
+
+            clock /= if ppre < 0b100 {
+                1
+            } else {
+                APBAHB_PRESCALER_TABLE[(ppre-0b100) as usize]
+            };
+
+            clock
             // critical_section_end
         }
     }
 }
 impl Peripheral for RCCPeripheral {
     fn init(&self) -> Result<(), String> {
-        let reg = (self.clock as u8) >> 5;
-        let mask = 1 << ((self.clock as u8) & 0x1F);
-
-        self.set_clock_enable(reg, mask, mask);
-
+        self.set_clock(true);
         Ok(())
     }
-
-    fn deinit(&self) -> Result<(), String> {
-        let reg = (self.clock as u8) >> 5;
-        let mask = 1 << ((self.clock as u8) & 0x1F);
-
-        self.set_clock_enable(reg, 0, mask);
-
-        Ok(())
+}
+impl Drop for RCCPeripheral {
+    fn drop(&mut self) {
+        self.set_clock(false);
     }
 }
 

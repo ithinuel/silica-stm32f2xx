@@ -5,7 +5,7 @@ authors = ["ithinuel <ithinuel@gmail.com>"]
 
 [dependencies]
 silica = { path = "../silica" }
-silica-cortexm3 = { path = "../silica-cortexm3" }
+silica-cortexm = { path = "../silica-cortexm" }
 
 [dependencies.compiler_builtins]
 git = "https://github.com/rust-lang-nursery/compiler-builtins.git"

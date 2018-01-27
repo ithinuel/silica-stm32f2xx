@@ -1,5 +1,4 @@
 mod flags;
-
 pub use self::flags::*;
 
 use registers::*;
@@ -15,5 +14,5 @@ pub struct FlashRegisters {
 }
 
 extern {
-    pub fn flash_get() -> &mut FlashRegisters;
+    pub fn flash_get() -> &'static mut FlashRegisters;
 }

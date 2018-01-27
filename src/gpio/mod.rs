@@ -1,10 +1,10 @@
-use collections::string::String;
-use collections::string::ToString;
+use alloc::string::String;
+use alloc::string::ToString;
 
+use silica::peripheral::Peripheral;
 use silica::peripheral::gpio::{Input as IInput, Output as IOutput};
 
 use rcc;
-use Peripheral;
 use registers::*;
 
 #[derive(Copy, Clone)]
@@ -36,7 +36,7 @@ pub enum OutputType {
 pub enum Mode {
     In,
     Out(OutputType, bool),
-    AlternateFunction(AlternateFunction),
+    AlternateFunction(AlternateFunction, OutputType),
     Analog
 }
 
@@ -79,18 +79,17 @@ pub struct PortPeripheral {
     pub base_address: *mut PortRegisters,
     pub clock: rcc::RCCPeripheral
 }
+unsafe impl Sync for PortPeripheral {}
 impl Peripheral for PortPeripheral {
     fn init(&self) -> Result<(), String> {
-        init_peripheral![Some(&self.clock)];
+        init_peripherals![&self.clock];
 
         Ok(())
     }
-    fn deinit(&self) -> Result<(), String> {
-        // if all pins disabled
-        // clock off
-
-        // what make a pin disabled ???
-        Err("Not yet implemented".to_string())
+}
+impl Drop for PortPeripheral {
+    fn drop(&mut self) {
+        unimplemented!();
     }
 }
 
@@ -101,7 +100,6 @@ pub struct PinPeripheral<'a> {
     pub speed: Frequency,
     pub pull_side: PullSide,
 }
-
 unsafe impl<'a> Sync for PinPeripheral<'a> {}
 
 impl<'a> Peripheral for PinPeripheral<'a> {
@@ -117,7 +115,7 @@ impl<'a> Peripheral for PinPeripheral<'a> {
         let (mode, otype, af, state) = match self.mode {
             Mode::In => (0, 0, 0, false),
             Mode::Out(otype, state) => (1, otype as u16, 0, state),
-            Mode::AlternateFunction(af) => (2, 0, af as u32, false),
+            Mode::AlternateFunction(af, otype) => (2, otype as u16, af as u32, false),
             Mode::Analog => { (3, 0, 0, false) }
         };
 
@@ -126,13 +124,12 @@ impl<'a> Peripheral for PinPeripheral<'a> {
         let twobit_mask = 3 << twobit_shift;
 
         let mut af_shift = self.pin * 4;
-        if af_shift > 32 {
-            af_shift = af_shift - 32;
+        if af_shift >= 32 {
+            af_shift -= 32;
         }
         let af_mask = 0xF << af_shift;
 
         unsafe {
-            (*self.port.base_address).mode.update(mode << twobit_shift, twobit_mask);
             (*self.port.base_address).output_type.update(otype << self.pin, onebit_mask);
             (*self.port.base_address).output_speed.update((self.speed as u32) << twobit_shift, twobit_mask);
             (*self.port.base_address).pu_pd.update((self.pull_side as u32) << twobit_shift, twobit_mask);
@@ -141,18 +138,20 @@ impl<'a> Peripheral for PinPeripheral<'a> {
             } else {
                 (*self.port.base_address).output_data.update(0, onebit_mask);
             }
-            if self.pin > 7 {
+            if self.pin < 8 {
                 (*self.port.base_address).alternate_function_low.update(af << af_shift, af_mask);
             } else {
                 (*self.port.base_address).alternate_function_high.update(af << af_shift, af_mask);
             }
+            (*self.port.base_address).mode.update(mode << twobit_shift, twobit_mask);
         }
 
         Ok(())
     }
-
-    fn deinit(&self) -> Result<(), String> {
-        Err("Not yet implemented".to_string())
+}
+impl<'a> Drop for PinPeripheral<'a> {
+    fn drop(&mut self) {
+        unimplemented!();
     }
 }
 
@@ -169,19 +168,16 @@ impl<'a> IInput for In<'a> {
     }
 }
 
-impl<'a> Drop for In<'a> {
-    fn drop(&mut self) {
-    }
-}
-
 pub struct Out<'a> {
     periph: &'a PinPeripheral<'a>
 }
 
 impl<'a> Out<'a> {
-    pub fn from(f: &'a PinPeripheral<'a>) -> Out<'a> {
-        Out {
-            periph: f
+    pub fn from(f: &'a PinPeripheral<'a>) -> Result<Out<'a>, String> {
+        if let Err(msg) = f.init() {
+            Err(msg)
+        } else {
+            Ok(Out { periph: f })
         }
     }
 }
@@ -203,10 +199,5 @@ impl<'a> IOutput for Out<'a> {
             }
             ((*self.periph.port.base_address).output_data.read() & mask) == mask
         }
-    }
-}
-
-impl<'a> Drop for Out<'a> {
-    fn drop(&mut self) {
     }
 }
